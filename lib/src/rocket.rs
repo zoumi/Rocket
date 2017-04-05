@@ -564,4 +564,10 @@ impl Rocket {
         let threads = self.config.workers as usize;
         server.handle_threads(self, threads).unwrap();
     }
+
+    /// Retrieves all of the mounted routes.
+    #[inline(always)]
+    pub fn routes<'a>(&'a self) -> impl Iterator<Item=&'a Route> + 'a {
+        self.router.routes()
+    }
 }
