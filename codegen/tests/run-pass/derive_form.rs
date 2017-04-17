@@ -64,6 +64,11 @@ struct UnpresentCheckboxTwo<'r> {
     something: &'r str
 }
 
+#[derive(Debug, PartialEq, FromForm)]
+struct FieldNamedV<'r> {
+    v: &'r str,
+}
+
 fn parse<'f, T: FromForm<'f>>(string: &'f str) -> Option<T> {
     let mut items = FormItems::from(string);
     let result = T::from_form_items(items.by_ref());
@@ -139,5 +144,11 @@ fn main() {
     assert_eq!(manual, Some(UnpresentCheckboxTwo {
         checkbox: false,
         something: "hello"
+    }));
+
+    // Check that a structure with one field `v` parses correctly.
+    let manual: Option<FieldNamedV> = parse("v=abc");
+    assert_eq!(manual, Some(FieldNamedV {
+        v: "abc"
     }));
 }

@@ -178,11 +178,11 @@ fn from_form_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substruct
         let id_str = ident_string.as_str();
         arms.push(quote_tokens!(cx,
             $id_str => {
-                $ident = match ::rocket::request::FromFormValue::from_form_value(v) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
+                $ident = match ::rocket::request::FromFormValue::from_form_value(__v) {
+                    Ok(__v) => Some(__v),
+                    Err(__e) => {
                         println!("    => Error parsing form val '{}': {:?}",
-                                 $id_str, e);
+                                 $id_str, __e);
                         $return_err_stmt
                     }
                 };
@@ -193,17 +193,17 @@ fn from_form_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substruct
     // The actual match statement. Iterate through all of the fields in the form
     // and use the $arms generated above.
     stmts.push(quote_stmt!(cx,
-        for (k, v) in $arg {
-            match k {
+        for (__k, __v) in $arg {
+            match __k {
                 $arms
-                field if field == "_method" => {
+                __field if __field == "_method" => {
                     /* This is a Rocket-specific field. If the user hasn't asked
                      * for it, just let it go by without error. This should stay
                      * in sync with Rocket::preprocess. */
                 }
                 _ => {
                     println!("    => {}={} has no matching field in struct.",
-                             k, v);
+                             __k, __v);
                     $return_err_stmt
                 }
            };
