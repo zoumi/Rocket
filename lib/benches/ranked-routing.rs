@@ -4,7 +4,6 @@
 extern crate rocket;
 
 use rocket::config::{Environment, Config};
-use rocket::http::RawStr;
 
 #[get("/", format = "application/json")]
 fn get() -> &'static str { "json" }
@@ -39,22 +38,22 @@ mod benches {
     use self::test::Bencher;
     use rocket::testing::MockRequest;
     use rocket::http::Method::*;
-    use rocket::http::{Accept, ContentType};
+    use rocket::http::ContentType;
 
-    #[bench]
-    fn accept_format(b: &mut Bencher) {
-        let rocket = rocket();
-        let mut requests = vec![];
-        requests.push(MockRequest::new(Get, "/").header(Accept::JSON));
-        requests.push(MockRequest::new(Get, "/").header(Accept::HTML));
-        requests.push(MockRequest::new(Get, "/").header(Accept::Plain));
+    // #[bench]
+    // fn accept_format(b: &mut Bencher) {
+    //     let rocket = rocket();
+    //     let mut requests = vec![];
+    //     requests.push(MockRequest::new(Get, "/").header(Accept::JSON));
+    //     requests.push(MockRequest::new(Get, "/").header(Accept::HTML));
+    //     requests.push(MockRequest::new(Get, "/").header(Accept::Plain));
 
-        b.iter(|| {
-            for request in requests.iter_mut() {
-                request.dispatch_with(&rocket);
-            }
-        });
-    }
+    //     b.iter(|| {
+    //         for request in requests.iter_mut() {
+    //             request.dispatch_with(&rocket);
+    //         }
+    //     });
+    // }
 
     #[bench]
     fn content_type_format(b: &mut Bencher) {

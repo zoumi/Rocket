@@ -4,7 +4,6 @@
 extern crate rocket;
 
 use rocket::config::{Environment, Config};
-use rocket::http::RawStr;
 
 #[get("/")]
 fn get_index() -> &'static str { "index" }
@@ -25,7 +24,7 @@ fn index_b() -> &'static str { "index" }
 fn index_c() -> &'static str { "index" }
 
 #[get("/<a>")]
-fn index_dyn_a(a: &RawStr) -> &'static str { "index" }
+fn index_dyn_a(a: &str) -> &'static str { "index" }
 
 fn rocket() -> rocket::Rocket {
     let config = Config::new(Environment::Production).unwrap();
