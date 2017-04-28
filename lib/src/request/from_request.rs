@@ -105,8 +105,6 @@ impl<S, E> IntoOutcome<S, (Status, E), ()> for Result<S, E> {
 ///     Extracts the remote address of the incoming request as a `SocketAddr`.
 ///     If the remote address is not known, the request is forwarded.
 ///
-///     _This implementation always returns successfully._
-///
 ///   * **Option&lt;T>** _where_ **T: FromRequest**
 ///
 ///     The type `T` is derived from the incoming request using `T`'s
