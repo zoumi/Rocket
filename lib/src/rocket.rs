@@ -566,6 +566,7 @@ impl Rocket {
     }
 
     /// Retrieves all of the mounted routes.
+    #[doc(hidden)]
     #[inline(always)]
     pub fn routes<'a>(&'a self) -> impl Iterator<Item=&'a Route> + 'a {
         self.router.routes()
