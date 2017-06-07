@@ -12,7 +12,7 @@ struct TodoTask {
     completed: bool
 }
 
-// TODO: Make deriving `FromForm` for this enum possible.
+// TODO: Make deriving `FromFormValue` for this enum possible.
 #[derive(Debug, PartialEq)]
 enum FormOption {
     A, B, C

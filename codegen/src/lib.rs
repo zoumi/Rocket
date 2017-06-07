@@ -111,18 +111,21 @@
 
 #![crate_type = "dylib"]
 #![feature(quote, concat_idents, plugin_registrar, rustc_private, unicode)]
-#![feature(custom_attribute)]
+#![feature(custom_attribute, use_extern_macros, never_type)]
 #![feature(i128_type)]
 #![allow(unused_attributes)]
 #![allow(deprecated)]
+#![recursion_limit = "256"]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate rustc;
+extern crate quote;
 extern crate syntax;
 extern crate syntax_ext;
 extern crate syntax_pos;
 extern crate rustc_plugin;
 extern crate rocket;
+extern crate syn;
 
 #[macro_use] mod utils;
 mod parser;

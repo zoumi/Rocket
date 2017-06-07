@@ -1,317 +1,196 @@
-#![allow(unused_imports)] // FIXME: Why is this coming from quote_tokens?
+use {syn, quote};
+use quote::*;
 
-use std::mem::transmute;
-use std::collections::HashMap;
-
+use syntax::ast;
 use syntax::ext::base::{Annotatable, ExtCtxt};
-use syntax::print::pprust::{stmt_to_string};
-use syntax::ast::{ItemKind, Expr, MetaItem, Mutability, VariantData, Ident};
-use syntax::ast::StructField;
-use syntax::codemap::Span;
-use syntax::ext::build::AstBuilder;
-use syntax::ptr::P;
+use syntax::codemap::{Span, FilePathMapping};
+use syntax::parse::{ParseSess, parse_item_from_source_str};
+use syntax::print::pprust::item_to_string;
 
-use syntax_ext::deriving::generic::MethodDef;
-use syntax_ext::deriving::generic::{StaticStruct, Substructure, TraitDef, ty};
-use syntax_ext::deriving::generic::combine_substructure as c_s;
+use utils;
 
-use utils::{strip_ty_lifetimes, is_valid_ident, SpanExt};
-
-static ONLY_STRUCTS_ERR: &'static str = "`FromForm` can only be derived for \
-    structures with named fields.";
-static PRIVATE_LIFETIME: &'static str = "'rocket";
-
-fn get_struct_lifetime(ecx: &mut ExtCtxt, item: &Annotatable, span: Span)
-        -> Option<String> {
-    match *item {
-        Annotatable::Item(ref item) => match item.node {
-            ItemKind::Struct(_, ref generics) => {
-                match generics.lifetimes.len() {
-                    0 => None,
-                    1 => {
-                        let lifetime = generics.lifetimes[0].lifetime;
-                        Some(lifetime.ident.to_string())
-                    }
-                    _ => {
-                        ecx.span_err(item.span, "cannot have more than one \
-                            lifetime parameter when deriving `FromForm`.");
-                        None
-                    }
-                }
-            },
-            _ => ecx.span_fatal(span, ONLY_STRUCTS_ERR)
-        },
-        _ => ecx.span_fatal(span, ONLY_STRUCTS_ERR)
-    }
-}
+static ITEM_ERR: &str = "`FromForm` can only be derived for structs with named fields.";
 
 // TODO: Use proper logging to emit the error messages.
-pub fn from_form_derive(ecx: &mut ExtCtxt, span: Span, meta_item: &MetaItem,
-          annotated: &Annotatable, push: &mut FnMut(Annotatable)) {
-    let struct_lifetime = get_struct_lifetime(ecx, annotated, span);
-    let (lifetime_var, trait_generics) = match struct_lifetime {
-        Some(ref lifetime) => (Some(lifetime.as_str()), ty::LifetimeBounds::empty()),
-        None => (Some(PRIVATE_LIFETIME), ty::LifetimeBounds {
-                lifetimes: vec![(PRIVATE_LIFETIME, vec![])],
-                bounds: vec![]
-            })
+pub fn from_form_derive(
+    ecx: &mut ExtCtxt,
+    span: Span,
+    _meta_item: &ast::MetaItem,
+    annotated: &Annotatable,
+    push: &mut FnMut(Annotatable)
+) {
+    let item = match *annotated {
+        Annotatable::Item(ref item) => item,
+        _ => ecx.span_fatal(span, ITEM_ERR)
     };
 
-    // The error type in the derived implementation.
-    let error_type = ty::Ty::Literal(ty::Path::new(vec!["rocket", "Error"]));
+    utils::mark_known_attrs(item, "form");
 
-    let trait_def = TraitDef {
-        is_unsafe: false,
-        supports_unions: false,
-        span: span,
-        // We add these attribute because some `FromFormValue` implementations
-        // can't fail. This is indicated via the `!` type. Rust checks if a
-        // match is made with something of that type, and since we always emit
-        // an `Err` match, we'll get this lint warning.
-        attributes: vec![quote_attr!(ecx, #[allow(unreachable_code, unreachable_patterns)])],
-        path: ty::Path {
-            path: vec!["rocket", "request", "FromForm"],
-            lifetime: lifetime_var,
-            params: vec![],
-            global: true,
-        },
-        additional_bounds: Vec::new(),
-        generics: trait_generics,
-        methods: vec![
-            MethodDef {
-                name: "from_form",
-                generics: ty::LifetimeBounds::empty(),
-                explicit_self: None,
-                args: vec![
-                    ty::Ptr(
-                        Box::new(ty::Literal(ty::Path {
-                            path: vec!["rocket", "request", "FormItems"],
-                            lifetime: lifetime_var,
-                            params: vec![],
-                            global: true
-                        })),
-                        ty::Borrowed(None, Mutability::Mutable)
-                    ),
-                    ty::Literal(ty::Path {
-                        path: vec!["bool"],
-                        lifetime: None,
-                        params: vec![],
-                        global: false,
-                    })
-                ],
-                ret_ty: ty::Literal(ty::Path {
-                    path: vec!["std", "result", "Result"],
-                    lifetime: None,
-                    params: vec![
-                        Box::new(ty::Ty::Self_),
-                        Box::new(error_type.clone())
-                    ],
-                    global: true,
-                }),
-                attributes: vec![],
-                is_unsafe: false,
-                combine_substructure: c_s(Box::new(from_form_substructure)),
-                unify_fieldless_variants: false,
-            }
-        ],
-        associated_types: vec![
-            (Ident::from_str("Error"), error_type.clone())
-        ],
-    };
-
-    trait_def.expand(ecx, meta_item, annotated, push);
-}
-
-pub fn extract_field_ident_name(ecx: &ExtCtxt, struct_field: &StructField)
-        -> (Ident, String, Span) {
-    let ident = match struct_field.ident {
-        Some(ident) => ident,
-        None => ecx.span_fatal(struct_field.span, ONLY_STRUCTS_ERR)
-    };
-
-    let field_attrs: Vec<_> = struct_field.attrs.iter()
-        .filter(|attr| attr.check_name("form"))
-        .collect();
-
-    let default = |ident: Ident| (ident, ident.to_string(), struct_field.span);
-    if field_attrs.len() == 0 {
-        return default(ident);
-    } else if field_attrs.len() > 1 {
-        ecx.span_err(struct_field.span, "only a single #[form(..)] \
-            attribute can be applied to a given struct field at a time");
-        return default(ident);
-    }
-
-    let field_attr = field_attrs[0];
-    ::syntax::attr::mark_known(&field_attr);
-    if !field_attr.meta_item_list().map_or(false, |l| l.len() == 1) {
-        ecx.struct_span_err(field_attr.span, "incorrect use of attribute")
-            .help(r#"the `form` attribute must have the form: #[form(field = "..")]"#)
-            .emit();
-        return default(ident);
-    }
-
-    let inner_item = &field_attr.meta_item_list().unwrap()[0];
-    if !inner_item.check_name("field") {
-        ecx.struct_span_err(inner_item.span, "invalid `form` attribute contents")
-            .help(r#"only the 'field' key is supported: #[form(field = "..")]"#)
-            .emit();
-        return default(ident);
-    }
-
-    if !inner_item.is_value_str() {
-        ecx.struct_span_err(inner_item.span, "invalid `field` in attribute")
-            .help(r#"the `form` attribute must have the form: #[form(field = "..")]"#)
-            .emit();
-        return default(ident);
-    }
-
-    let name = inner_item.value_str().unwrap().as_str().to_string();
-    let sp = inner_item.span.shorten_upto(name.len() + 2);
-    if !is_valid_ident(&name) {
-        ecx.span_err(sp, "invalid form field identifier");
-    }
-
-    (ident, name, sp)
-}
-
-fn from_form_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) -> P<Expr> {
-    // Check that we specified the methods to the argument correctly.
-    const EXPECTED_ARGS: usize = 2;
-    let (items_arg, strict_arg) = if substr.nonself_args.len() == EXPECTED_ARGS {
-        (&substr.nonself_args[0], &substr.nonself_args[1])
-    } else {
-        let msg = format!("incorrect number of arguments in `from_form_string`: \
-            expected {}, found {}", EXPECTED_ARGS, substr.nonself_args.len());
-        cx.span_bug(trait_span, msg.as_str());
-    };
-
-    debug!("arguments are: {:?}, {:?}", items_arg, strict_arg);
-
-    // Ensure the the fields are from a 'StaticStruct' and extract them.
-    let fields = match *substr.fields {
-        StaticStruct(var_data, _) => match *var_data {
-            VariantData::Struct(ref fields, _) => fields,
-            _ => cx.span_fatal(trait_span, ONLY_STRUCTS_ERR)
-        },
-        _ => cx.span_bug(trait_span, "impossible substructure in `from_form`")
-    };
-
-    // Vec of (ident: Ident, type: Ty, name: String), one for each field.
-    let mut names = HashMap::new();
-    let mut fields_info = vec![];
-    for field in fields {
-        let (ident, name, span) = extract_field_ident_name(cx, field);
-        let stripped_ty = strip_ty_lifetimes(field.ty.clone());
-
-        if let Some(sp) = names.get(&name).map(|sp| *sp) {
-            cx.struct_span_err(span, "field with duplicate name")
-                .span_note(sp, "original was declared here")
+    let source_string = item_to_string(item);
+    let ast = syn::parse_macro_input(&source_string).unwrap();
+    match impl_derive(&ast) {
+        Ok(tokens) => {
+            let impl_source = tokens.to_string();
+            let sess = ParseSess::new(FilePathMapping::empty());
+            match parse_item_from_source_str("ROCKET".into(), impl_source, &sess) {
+                Ok(Some(item)) => push(Annotatable::Item(item)),
+                _ => panic!("'derive_form' error. Report to Rocket's issue tracker.")
+            };
+        }
+        Err(error_string) => {
+            ecx.struct_span_err(item.span, &error_string)
+                .span_label(span, "from this `FromForm` derive")
                 .emit();
-        } else {
-            names.insert(name.clone(), span);
+        }
+    }
+}
+
+// Returns the original ident of a given `field` as well as the ident requested
+// by the user: (original ident, user requested ident). The user requested ident
+// is just the original ident except when overrides via #[form(field = "name")].
+fn field_idents(field: &syn::Field) -> Result<(syn::Ident, syn::Ident), String> {
+    let malformed_attr = "malformed `form` struct field attribute; \
+                          expected `#[form(field = \"name\")]`".to_string();
+
+    let mut form_attrs = field.attrs.iter().filter(|attr| attr.name() == "form");
+    let original_ident = field.ident.as_ref().unwrap().clone();
+    let user_ident = if let Some(attr) = form_attrs.next() {
+        if form_attrs.next().is_some() {
+            return Err("a struct field may not have more than \
+                       one `#[form(..)]` attribute".into());
         }
 
-        fields_info.push((ident, stripped_ty, name));
-    }
+        let list_items = match attr.value {
+            syn::MetaItem::List(_, ref items) if items.len() == 1 => items,
+            _ => return Err(malformed_attr)
+        };
 
-    debug!("Fields, types, attrs: {:?}", fields_info);
-    let mut stmts = Vec::new();
+        let inner_item = match list_items[0] {
+            syn::NestedMetaItem::MetaItem(ref item) => item,
+            _ => return Err(malformed_attr)
+        };
 
-    // The thing to do when we wish to exit with an error.
-    let return_err_stmt = quote_tokens!(cx,
-        return Err(::rocket::Error::BadParse)
-    );
+        if inner_item.name() != "field" {
+            return Err(malformed_attr)
+        }
 
-    // Generate the let bindings for parameters that will be unwrapped and
-    // placed into the final struct. They start out as `None` and are changed
-    // to Some when a parse completes, or some default value if the parse was
-    // unsuccessful and default() returns Some.
-    for &(ref ident, ref ty, _) in &fields_info {
-        stmts.push(quote_stmt!(cx,
-            let mut $ident: ::std::option::Option<$ty> = None;
-        ).unwrap());
-    }
+        let form_field = match *inner_item {
+            syn::MetaItem::NameValue(_, syn::Lit::Str(ref s, _)) => s,
+            _ => return Err(malformed_attr)
+        };
 
-    // Generating an arm for each struct field. This matches against the key and
-    // tries to parse the value according to the type.
-    let mut arms = vec![];
-    for &(ref ident, _, ref name) in &fields_info {
-        arms.push(quote_tokens!(cx,
-            $name => {
-                let __r = ::rocket::http::RawStr::from_str(__v);
-                $ident = match ::rocket::request::FromFormValue::from_form_value(__r) {
-                    Ok(__v) => Some(__v),
-                    Err(__e) => {
-                        println!("    => Error parsing form val '{}': {:?}",
-                                 $name, __e);
-                        $return_err_stmt
-                    }
-                };
-            },
-        ));
-    }
+        syn::Ident::new(form_field.as_str())
+    } else {
+        original_ident.clone()
+    };
 
-    // The actual match statement. Iterate through all of the fields in the form
-    // and use the $arms generated above.
-    stmts.push(quote_stmt!(cx,
-        for (__k, __v) in $items_arg {
-            match __k.as_str() {
-                $arms
-                _ => {
-                    // If we're parsing strictly, emit an error for everything
-                    // the user hasn't asked for. Keep synced with 'preprocess'.
-                    if $strict_arg && __k != "_method" {
-                        println!("    => {}={} has no matching field in struct.",
-                                 __k, __v);
-                        $return_err_stmt
-                    }
-                }
-           };
-       }
-    ).unwrap());
-
-    // This looks complicated but just generates the boolean condition checking
-    // that each parameter actually is Some() or has a default value.
-    let mut failure_conditions = vec![];
-
-    for &(ref ident, ref ty, _) in (&fields_info).iter() {
-        failure_conditions.push(quote_tokens!(cx,
-            if $ident.is_none() &&
-                <$ty as ::rocket::request::FromFormValue>::default().is_none() {
-                println!("    => '{}' did not parse.", stringify!($ident));
-                $return_err_stmt;
-            }
-        ));
-    }
-
-    // The fields of the struct, which are just the let bindings declared above
-    // or the default value.
-    let mut result_fields = vec![];
-    for &(ref ident, ref ty, _) in &fields_info {
-        result_fields.push(quote_tokens!(cx,
-            $ident: $ident.unwrap_or_else(||
-                <$ty as ::rocket::request::FromFormValue>::default().unwrap()
-            ),
-        ));
-    }
-
-    // The final block: check the error conditions, and if all is well, return
-    // the structure.
-    let self_ident = substr.type_ident;
-    let final_block = quote_block!(cx, {
-        $failure_conditions
-
-        Ok($self_ident { $result_fields })
-    });
-
-    stmts.extend(final_block.unwrap().stmts);
-
-    debug!("Form statements:");
-    for stmt in &stmts {
-        debug!("{:?}", stmt_to_string(stmt));
-    }
-
-    cx.expr_block(cx.block(trait_span, stmts))
+    Ok((original_ident, user_ident))
 }
 
+// Returns the `impl` for `FromForm`.
+fn impl_derive(ast: &syn::DeriveInput) -> Result<quote::Tokens, String> {
+    let name = &ast.ident;
+
+    let (_, ty_generics, where_clause) = ast.generics.split_for_impl();
+    let impl_ty_generics = ast.generics.ty_params.iter().map(|ty| quote!(#ty));
+    let mut lifetime_generics = ast.generics.lifetimes.iter().map(|l| quote!(#l));
+
+    let lifetime = lifetime_generics.next().unwrap_or(quote!('f));
+    let all_generics: Vec<_> = lifetime_generics.chain(impl_ty_generics).collect();
+    let generics = quote!(<#lifetime #(, #all_generics)*>);
+
+    let (str_names, idents, types) = match ast.body {
+        syn::Body::Struct(syn::VariantData::Struct(ref fields)) => {
+            let field_idents = fields.iter()
+                .map(field_idents)
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let (mut idents, mut str_names) = (vec![], vec![]);
+            for (ident, name) in field_idents {
+                idents.push(ident);
+                str_names.push(name.to_string());
+            }
+
+            let types: Vec<_> = fields.iter()
+                .map(|field| utils::syn_strip_lifetimes(field.ty.clone()))
+                .map(|ty| quote! { #ty })
+                .collect();
+
+            (str_names, idents, types)
+        }
+        _ => return Err(ITEM_ERR.into())
+    };
+
+    // Ensure no two fields have the same name.
+    let mut sorted_strs = str_names.clone();
+    sorted_strs.sort();
+    for i in 1..sorted_strs.len() {
+        if sorted_strs[i] == sorted_strs[i - 1] {
+            return Err(format!("more than one field with name '{}'", sorted_strs[i]));
+        }
+    }
+
+    // Ensure all field names are valid.
+    if let Some(f) = str_names.iter().filter(|n| !utils::is_valid_ident(n)).next() {
+        return Err(format!("invalid field name: '{}'", f));
+    }
+
+    let (str_names, idents, types) = (&str_names, &idents, &types);
+    let (idents_copy, str_names_copy) = (idents, str_names);
+    Ok(quote! {
+        #[allow(unreachable_code, unreachable_patterns)]
+        impl #generics ::rocket::request::FromForm<#lifetime> for #name #ty_generics
+            #where_clause
+        {
+            type Error = ();
+            fn from_form(__items: &mut ::rocket::request::FormItems<#lifetime>,
+                         __strict: bool,
+                        ) -> Result<#name #ty_generics, ()>
+            {
+                use ::rocket::http::RawStr;
+                use ::rocket::request::FromFormValue;
+
+                #(let mut #idents: Option<#types> = None;)*
+                for (__k, __v) in __items {
+                    match __k.as_str() {
+                        #(
+                            #str_names => {
+                                let __r = RawStr::from_str(__v);
+                                #idents = match FromFormValue::from_form_value(__r) {
+                                    Ok(__v) => Some(__v),
+                                    Err(__e) => {
+                                        println!("    => Error parsing field '{}': {:?}",
+                                                 #str_names_copy, __e);
+                                        return Err(());
+                                    }
+                                };
+                            },
+                         )*
+                        _ => {
+                            if __strict && __k != "_method" {
+                                println!("    => {}={} has no matching field in struct.", __k, __v);
+                                return Err(());
+                            }
+                        }
+                    };
+                }
+
+                Ok(#name {
+                    #(
+                        #idents: match #idents_copy {
+                            Some(__val) => __val,
+                            None => match <#types as FromFormValue>::default() {
+                                Some(__val) => __val,
+                                None => {
+                                    println!("    => '{}' did not parse.",
+                                             stringify!(#str_names));
+                                    return Err(());
+                                }
+                            }
+                        },
+                    )*
+                })
+            }
+        }
+    })
+}

@@ -15,7 +15,7 @@ use std::convert::AsRef;
 use syntax;
 use syntax::parse::token::Token;
 use syntax::tokenstream::TokenTree;
-use syntax::ast::{Item, Expr};
+use syntax::ast::{self, Item, Expr};
 use syntax::ext::base::{Annotatable, ExtCtxt};
 use syntax::codemap::{Span, Spanned, DUMMY_SP};
 use syntax::ext::quote::rt::ToTokens;
@@ -139,4 +139,88 @@ pub fn is_valid_ident<S: AsRef<str>>(s: S) -> bool {
     }
 
     true
+}
+
+// Makes every 'attr_name' attribute uses in `item` as known so we don't get a
+// compile-time error from rustc. This will go away with macros 1.1/2.
+pub fn mark_known_attrs(item: &ast::Item, attr_name: &str) {
+    for attr in item.attrs.iter() {
+        if attr.check_name(attr_name) {
+            syntax::attr::mark_known(attr);
+        }
+    }
+
+    if let ast::ItemKind::Struct(ast::VariantData::Struct(ref fs, _), _) = item.node {
+        for attr in fs.iter().flat_map(|field| field.attrs.iter()) {
+            if attr.check_name(attr_name) {
+                syntax::attr::mark_known(attr);
+            }
+        }
+    }
+}
+
+use syn;
+
+pub fn syn_strip_lifetimes(mut ty: syn::Ty) -> syn::Ty {
+    fn strip(ty: &mut syn::Ty) {
+        match *ty {
+            syn::Ty::Rptr(ref mut lifetime, ref mut mut_ty) => {
+                *lifetime = None;
+                strip(&mut mut_ty.ty);
+            }
+            syn::Ty::Slice(ref mut ty) => strip(&mut **ty),
+            syn::Ty::Array(ref mut ty, _) => strip(&mut **ty),
+            syn::Ty::Ptr(ref mut mut_ty) => strip(&mut mut_ty.ty),
+            syn::Ty::BareFn(ref mut bare_fn_ty) => {
+                bare_fn_ty.lifetimes = vec![];
+                if let syn::FunctionRetTy::Ty(ref mut ty) = bare_fn_ty.output {
+                    strip(ty);
+                }
+
+                for input in bare_fn_ty.inputs.iter_mut() {
+                    strip(&mut input.ty);
+                }
+            }
+            syn::Ty::Tup(ref mut tys) => {
+                for ty in tys.iter_mut() {
+                    strip(ty)
+                }
+            }
+            syn::Ty::Path(ref mut opt_qself, ref mut path) => {
+                if let Some(ref mut qself) = *opt_qself {
+                    strip(&mut qself.ty);
+                }
+
+                for segment in path.segments.iter_mut() {
+                    match segment.parameters {
+                        syn::PathParameters::AngleBracketed(ref mut param_data) => {
+                            param_data.lifetimes = vec![];
+                            for ty in param_data.types.iter_mut() {
+                                strip(ty);
+                            }
+
+                            for binding in param_data.bindings.iter_mut() {
+                                strip(&mut binding.ty);
+                            }
+                        }
+                        syn::PathParameters::Parenthesized(ref mut param_data) => {
+                            for ty in param_data.inputs.iter_mut() {
+                                strip(ty);
+                            }
+
+                            if let Some(ref mut ty) = param_data.output {
+                                strip(ty);
+                            }
+                        }
+                    }
+                }
+            }
+            syn::Ty::Paren(ref mut ty) => strip(&mut **ty),
+            syn::Ty::Never | syn::Ty::Infer | syn::Ty::Mac(_) => {}
+            syn::Ty::TraitObject(_) | syn::Ty::ImplTrait(_) => { /* TODO: ?? */ }
+        }
+    }
+
+    strip(&mut ty);
+    ty
 }
