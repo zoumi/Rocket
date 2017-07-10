@@ -1,3 +1,15 @@
+# Version 0.2.9 (Jul 09, 2017)
+
+## Codegen
+
+  * Lints were updated for `2017-07-09` nightly.
+  * Minimum required `rustc` is `1.20.0-nightly (2017-07-09)`.
+
+## Core
+
+  * The `associated_consts` feature has been stabilized!
+  * Minimum required `rustc` is `1.20.0-nightly (2017-07-09)`.
+
 # Version 0.2.8 (Jun 01, 2017)
 
 ## Codegen
