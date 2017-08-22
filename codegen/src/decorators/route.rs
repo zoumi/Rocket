@@ -51,10 +51,10 @@ trait RouteGenerateExt {
 
 impl RouteGenerateExt for RouteParams {
     fn missing_declared_err<T: Display>(&self, ecx: &ExtCtxt, arg: &Spanned<T>) {
-        let fn_span = self.annotated_fn.span();
-        let msg = format!("'{}' is declared as an argument...", arg.node);
-        ecx.span_err(arg.span, &msg);
-        ecx.span_err(fn_span, "...but isn't in the function signature.");
+        let (fn_span, fn_name) = (self.annotated_fn.span(), self.annotated_fn.ident());
+        ecx.struct_span_err(arg.span, &format!("unused dynamic parameter: `{}`", arg.node))
+            .span_note(fn_span, &format!("expected argument named `{}` in `{}`", arg.node, fn_name))
+            .emit();
     }
 
     fn gen_form(&self,
