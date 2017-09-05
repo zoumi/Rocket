@@ -46,8 +46,9 @@ pub fn match_def_path(tcx: ty::TyCtxt, def_id: DefId, path: &[&str]) -> bool {
 
 /// Check if the method call given in `expr` belongs to given type.
 pub fn is_impl_method(cx: &LateContext, expr: &Expr, path: &[&str]) -> bool {
-    cx.tables.type_dependent_defs
-        .get(&expr.id)
+    let hir_id = cx.tcx.hir.node_to_hir_id(expr.id);
+    cx.tables.type_dependent_defs()
+        .get(hir_id)
         .and_then(|callee| cx.tcx.impl_of_method(callee.def_id()))
         .map(|trt_id| match_def_path(cx.tcx, trt_id, path))
         .unwrap_or(false)
@@ -82,7 +83,8 @@ pub fn rocket_method_call<'e>(method: &str,
 pub fn is_rocket_start_call(cx: &LateContext, expr: &Expr) -> bool {
     if let ExprCall(ref expr, ..) = expr.node {
         if let ExprPath(ref qpath) = expr.node {
-            let def_id = cx.tables.qpath_def(qpath, expr.id).def_id();
+            let hir_id = cx.tcx.hir.node_to_hir_id(expr.id);
+            let def_id = cx.tables.qpath_def(qpath, hir_id).def_id();
             if match_def_path(cx.tcx, def_id, ROCKET_IGNITE_FN) {
                 return true;
             } else if match_def_path(cx.tcx, def_id, ROCKET_IGNITE_STATIC) {
@@ -116,7 +118,8 @@ pub fn extract_mount_fn_def_ids(cx: &LateContext, expr: &Expr) -> Vec<DefId> {
                         if let ExprAddrOf(_, ref expr) = args[0].node {
                             // path to info_struct
                             if let ExprPath(ref qpath) = expr.node {
-                                let def = cx.tables.qpath_def(qpath, expr.id);
+                                let hir_id = cx.tcx.hir.node_to_hir_id(expr.id);
+                                let def = cx.tables.qpath_def(qpath, hir_id);
                                 output.push(def.def_id());
                             }
                         }
@@ -167,11 +170,11 @@ pub fn msg_and_help<'a, T: LintContext<'a>>(cx: &T,
                                             note: &str,
                                             help_sp: Option<Span>,
                                             help: &str) {
-    let mut b = cx.struct_span_lint(lint, msg_sp, msg);
-    b.note(note);
+    // Be conservative. If we don't know the receiver, don't emit the warning.
     if let Some(span) = help_sp {
-        b.span_help(span, help);
+        cx.struct_span_lint(lint, msg_sp, msg)
+            .note(note)
+            .span_help(span, help)
+            .emit()
     }
-
-    b.emit();
 }

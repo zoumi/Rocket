@@ -37,13 +37,15 @@ struct InstanceInfo {
 enum Receiver {
     Instance(DefId, Span),
     Call(NodeId, Span),
+    Relative(Span),
 }
 
 impl Receiver {
     /// Returns the span associated with the receiver.
     pub fn span(&self) -> Span {
+        use self::Receiver::*;
         match *self {
-            Receiver::Instance(_, sp) | Receiver::Call(_, sp) => sp
+            Instance(_, sp) | Call(_, sp) | Relative(sp) => sp
         }
     }
 }
@@ -142,9 +144,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for RocketLint {
     // the receiver in the type table we've constructed. If it's there, we use
     // it, if not, we use the call as the receiver.
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
-        /// Fetches the top-level `Receiver` instance given that a method call
-        /// was made to the receiver `rexpr`. Top-level here means "the
-        /// original". We search the `instance_vars` table to retrieve it.
+        // Fetches the top-level `Receiver` instance given that a method call
+        // was made to the receiver `rexpr`. Top-level here means "the
+        // original". We search the `instance_vars` table to retrieve it.
         let instance_for = |lint: &mut RocketLint, rexpr: &Expr| -> Option<Receiver> {
             match rexpr.node {
                 ExprPath(QPath::Resolved(_, ref p)) => {
@@ -152,8 +154,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for RocketLint {
                         .and_then(|id| lint.instance_vars.get(&id))
                         .map(|recvr| recvr.clone())
                 }
+                ExprPath(QPath::TypeRelative(_, _)) => {
+                    Some(Receiver::Relative(rexpr.span))
+                }
                 ExprCall(ref c, ..) => Some(Receiver::Call(c.id, rexpr.span)),
-                _ => unreachable!()
+                _ => panic!("Unexpected node: {:?}", rexpr.node)
             }
         };
 
@@ -256,7 +261,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for RocketLint {
 
         // Collect all of the `State` types and spans into `tys` and `spans`.
         let mut ty_and_spans: Vec<(Ty<'static>, Span)> = vec![];
-        if let Some(sig) = cx.tables.liberated_fn_sigs.get(&fn_id) {
+        let fn_hir_id = cx.tcx.hir.node_to_hir_id(fn_id);
+        if let Some(sig) = cx.tables.liberated_fn_sigs().get(fn_hir_id) {
             for (i, input_ty) in sig.inputs().iter().enumerate() {
                 let def_id = match input_ty.ty_to_def_id() {
                     Some(id) => id,
