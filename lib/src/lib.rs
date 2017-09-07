@@ -1,7 +1,6 @@
 #![feature(specialization)]
 #![feature(conservative_impl_trait)]
 #![feature(const_fn)]
-#![feature(lookup_host)]
 #![feature(plugin)]
 #![feature(never_type)]
 #![feature(try_trait)]
