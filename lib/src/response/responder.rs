@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, BufReader};
 use std::fmt;
 
 use http::{Status, ContentType};
@@ -223,7 +223,7 @@ impl<'r> Responder<'r> for Vec<u8> {
 /// Returns a response with a sized body for the file. Always returns `Ok`.
 impl<'r> Responder<'r> for File {
     fn respond_to(self, _: &Request) -> Result<Response<'r>, Status> {
-        Response::build().streamed_body(self).ok()
+        Response::build().streamed_body(BufReader::new(self)).ok()
     }
 }
 
