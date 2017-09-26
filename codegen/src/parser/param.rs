@@ -1,8 +1,8 @@
 use syntax::ast::Ident;
 use syntax::ext::base::ExtCtxt;
-use syntax::codemap::{Span, Spanned, BytePos};
+use syntax::codemap::{Span, Spanned};
 
-use utils::span;
+use utils::{span, SpanExt};
 
 #[derive(Debug)]
 pub enum Param {
@@ -67,13 +67,11 @@ impl<'s, 'a, 'c> Iterator for ParamIter<'s, 'a, 'c> {
             (false, full_param)
         };
 
-        let mut param_span = self.span;
-        param_span.lo = self.span.lo + BytePos(start as u32);
-        param_span.hi = self.span.lo + BytePos((end + 1) as u32);
+        let param_span = self.span.trim_left(start).shorten_to(end + 1);
 
         // Advance the string and span.
         self.string = &self.string[(end + 1)..];
-        self.span.lo = self.span.lo + BytePos((end + 1) as u32);
+        self.span = self.span.trim_left(end + 1);
 
         let spanned_ident = span(Ident::from_str(param), param_span);
         if is_many {
