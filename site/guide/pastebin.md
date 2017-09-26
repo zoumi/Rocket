@@ -43,8 +43,8 @@ Then add the usual Rocket dependencies to the `Cargo.toml` file:
 
 ```toml
 [dependencies]
-rocket = "0.3.2"
-rocket_codegen = "0.3.2"
+rocket = "0.3.3"
+rocket_codegen = "0.3.3"
 ```
 
 And finally, create a skeleton Rocket application to work off of in
@@ -405,4 +405,4 @@ through some of them to get a better feel for Rocket. Here are some ideas:
     cleans up idling old pastes in `upload/`.
 
 You can find the full source code for the [completed pastebin tutorial on
-GitHub](https://github.com/SergioBenitez/Rocket/tree/v0.3.2/examples/pastebin).
+GitHub](https://github.com/SergioBenitez/Rocket/tree/v0.3.3/examples/pastebin).
