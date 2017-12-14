@@ -4,7 +4,7 @@
 
 [release]
 url = "https://crates.io/crates/rocket"
-version = "0.3.3"
+version = "0.3.4"
 date = "Sep 25, 2017"
 
 [[top_features]]
