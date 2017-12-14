@@ -46,6 +46,7 @@ use http::uncased::UncasedStr;
 ///
 /// [`FromParam`]: /rocket/request/trait.FromParam.html
 /// [`FromFormValue`]: /rocket/request/trait.FromFormValue.html
+#[repr(C)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RawStr(str);
 
@@ -276,7 +277,7 @@ impl RawStr {
 impl<'a> From<&'a str> for &'a RawStr {
     #[inline(always)]
     fn from(string: &'a str) -> &'a RawStr {
-        unsafe { ::std::mem::transmute(string) }
+        unsafe { &*(string as *const str as *const RawStr) }
     }
 }
 
