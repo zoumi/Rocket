@@ -26,21 +26,23 @@ pub fn prefixing_vec_macro<F>(prefix: &str,
     where F: FnMut(&ExtCtxt, Path) -> P<Expr>
 {
     let mut parser = ecx.new_parser_from_tts(args);
-    let paths = parser.parse_paths();
-    if let Ok(mut paths) = paths {
-        // Prefix each path terminator and build up the P<Expr> for each path.
-        prefix_paths(prefix, &mut paths);
-        let path_exprs: Vec<P<Expr>> = paths.into_iter()
-            .map(|path| to_expr(ecx, path))
-            .collect();
+    match parser.parse_paths() {
+        Ok(mut paths) => {
+            // Prefix each path terminator and build up the P<Expr> for each path.
+            prefix_paths(prefix, &mut paths);
+            let path_exprs: Vec<P<Expr>> = paths.into_iter()
+                .map(|path| to_expr(ecx, path))
+                .collect();
 
-        // Now put them all in one vector and return the thing.
-        let path_list = sep_by_tok(ecx, &path_exprs, Token::Comma);
-        let output = quote_expr!(ecx, vec![$path_list]).unwrap();
-        MacEager::expr(P(output))
-    } else {
-        paths.unwrap_err().emit();
-        DummyResult::expr(sp)
+            // Now put them all in one vector and return the thing.
+            let path_list = sep_by_tok(ecx, &path_exprs, Token::Comma);
+            let output = quote_expr!(ecx, vec![$path_list]).into_inner();
+            MacEager::expr(P(output))
+        }
+        Err(mut e) => {
+            e.emit();
+            DummyResult::expr(sp)
+        }
     }
 }
 
