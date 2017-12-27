@@ -273,7 +273,17 @@ impl Responder<'static> for Template {
             info_!("See the `Template` documentation for more information.");
             Status::InternalServerError
         })?;
-
+        #[cfg(debug_assertions)]
+        let (render,content_type) = {
+            match Context::initialize(&ctxt.root) {
+                Some(ctxt) => self.finalize(&ctxt)?;
+                None => {
+                    error_!("The template context failed to initialize.");
+                    return Status::InternalServerError;
+                }
+            }
+        };
+        #[cfg(not(debug_assertions))]
         let (render, content_type) = self.finalize(&ctxt)?;
         Content(content_type, render).respond_to(req)
     }
