@@ -337,11 +337,11 @@ impl Responder<'static> for Template {
         })?;
         #[cfg(debug_assertions)]
         let (render,content_type) = {
-            match Context::initialize(&ctxt.root) {
-                Some(ctxt) => self.finalize(&ctxt)?;
+            match Context::initialize(ctxt.root.clone()) {
+                Some(ctxt) => {self.finalize(&ctxt)?}
                 None => {
                     error_!("The template context failed to initialize.");
-                    return Status::InternalServerError;
+                    return Err(Status::InternalServerError);
                 }
             }
         };
